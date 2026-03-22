@@ -1,0 +1,248 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  FREE
+  STARTER
+  GROWTH
+  ENTERPRISE
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  AGENT
+}
+
+enum ConversationStatus {
+  OPEN
+  ASSIGNED
+  RESOLVED
+  SNOOZED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  LOCATION
+  STICKER
+  TEMPLATE
+  INTERACTIVE
+}
+
+enum DealStatus {
+  OPEN
+  WON
+  LOST
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+model Workspace {
+  id               String   @id @default(uuid())
+  name             String
+  slug             String   @unique
+  plan             Plan     @default(FREE)
+  waPhoneNumberId  String?
+  waAccessToken    String?
+  waWebhookSecret  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  users            User[]
+  contacts         Contact[]
+  deals            Deal[]
+  stages           Stage[]
+  conversations    Conversation[]
+  tags             Tag[]
+
+  @@map("workspaces")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name          String
+  email         String
+  passwordHash  String
+  role          UserRole  @default(AGENT)
+  avatarUrl     String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  assignedConversations Conversation[] @relation("AssignedConversations")
+  ownedDeals            Deal[]         @relation("OwnedDeals")
+  sentMessages          Message[]
+
+  @@unique([workspaceId, email])
+  @@map("users")
+}
+
+model Contact {
+  id                String    @id @default(uuid())
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name              String
+  phone             String
+  waId              String
+  email             String?
+  company           String?
+  avatarUrl         String?
+  notes             String?
+  lastContactedAt   DateTime?
+  relationshipScore Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  conversations     Conversation[]
+  deals             Deal[]
+  tags              ContactTag[]
+
+  @@unique([workspaceId, waId])
+  @@index([workspaceId, waId])
+  @@index([workspaceId, phone])
+  @@map("contacts")
+}
+
+model Tag {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  color       String    @default("#6366f1")
+  contacts    ContactTag[]
+
+  @@unique([workspaceId, name])
+  @@map("tags")
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@map("contact_tags")
+}
+
+model Stage {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  position    Int
+  color       String    @default("#6366f1")
+  isWon       Boolean   @default(false)
+  isLost      Boolean   @default(false)
+  deals       Deal[]
+
+  @@unique([workspaceId, position])
+  @@map("stages")
+}
+
+model Deal {
+  id              String     @id @default(uuid())
+  workspaceId     String
+  workspace       Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contactId       String
+  contact         Contact    @relation(fields: [contactId], references: [id])
+  stageId         String
+  stage           Stage      @relation(fields: [stageId], references: [id])
+  ownerId         String?
+  owner           User?      @relation("OwnedDeals", fields: [ownerId], references: [id])
+  title           String
+  value           Decimal?   @db.Decimal(15, 2)
+  currency        String     @default("USD")
+  status          DealStatus @default(OPEN)
+  probability     Int?
+  expectedCloseAt DateTime?
+  closedAt        DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  summaries       AiSummary[]
+
+  @@index([workspaceId, stageId])
+  @@index([workspaceId, contactId])
+  @@map("deals")
+}
+
+model Conversation {
+  id               String             @id @default(uuid())
+  workspaceId      String
+  workspace        Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contactId        String
+  contact          Contact            @relation(fields: [contactId], references: [id])
+  assignedToId     String?
+  assignedTo       User?              @relation("AssignedConversations", fields: [assignedToId], references: [id])
+  waConversationId String?
+  status           ConversationStatus @default(OPEN)
+  lastMessageAt    DateTime?
+  snoozedUntil     DateTime?
+  isRead           Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  messages         Message[]
+  summaries        AiSummary[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, contactId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String           @id @default(uuid())
+  conversationId String
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sentById       String?
+  sentBy         User?            @relation(fields: [sentById], references: [id])
+  direction      MessageDirection
+  type           MessageType      @default(TEXT)
+  content        String?
+  mediaUrl       String?
+  mediaType      String?
+  caption        String?
+  waMessageId    String?          @unique
+  waStatus       String?
+  waTimestamp    DateTime?
+  isDeleted      Boolean          @default(false)
+  sentAt         DateTime         @default(now())
+
+  @@index([conversationId, sentAt])
+  @@index([waMessageId])
+  @@map("messages")
+}
+
+model AiSummary {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  dealId         String?
+  deal           Deal?        @relation(fields: [dealId], references: [id])
+  summary        String
+  nextAction     String?
+  sentiment      Sentiment    @default(NEUTRAL)
+  keyTopics      String[]
+  generatedAt    DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([dealId])
+  @@map("ai_summaries")
+}
